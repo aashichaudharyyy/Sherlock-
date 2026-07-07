@@ -1,7 +1,39 @@
+from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.svm import SVC, SVR
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 import streamlit as st
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler, LabelEncoder, OneHotEncoder
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    confusion_matrix,
+    mean_absolute_error,
+    mean_squared_error,
+    r2_score
+)
+from sklearn.model_selection import train_test_split
+
+classification_models = {
+    "Logistic Regression": LogisticRegression(),
+    "Decision Tree": DecisionTreeClassifier(random_state=42),
+    "Random Forest": RandomForestClassifier(random_state=42),
+    "KNN": KNeighborsClassifier(),
+    "SVM": SVC(probability=True)
+}
+
+regression_models = {
+    "Linear Regression": LinearRegression(),
+    "Decision Tree Regressor": DecisionTreeRegressor(random_state=42),
+    "Random Forest Regressor": RandomForestRegressor(random_state=42),
+    "SVR": SVR()
+}
 
 def get_outlier_stats(df, col):
     """Return IQR-based outlier rows and bounds for a numeric column."""
@@ -94,6 +126,134 @@ def apply_scaling(df, recommendations):
             df[[col]] = scaler.fit_transform(df[[col]])
     return True, df
 
+def recommend_models(problem_type, df, target_col):    
+    models = []
+
+    rows, cols = df.shape
+    categorical = len(df.select_dtypes(include=["object", "category"]).columns)
+    imbalance = df[target_col].value_counts(normalize=True).max()
+
+    if problem_type == "Binary Classification":
+
+        models.append({
+            "Model": "Random Forest",
+            "Rating": "★★★★★",
+            "Reason": "Excellent baseline model. Handles mixed features and captures non-linear relationships."
+        })
+
+        models.append({
+            "Model": "XGBoost",
+            "Rating": "★★★★★",
+            "Reason": "High accuracy and performs well on structured/tabular datasets."
+        })
+
+        models.append({
+            "Model": "Logistic Regression",
+            "Rating": "★★★★☆",
+            "Reason": "Simple, fast and highly interpretable baseline classifier."
+        })
+
+        if rows < 10000:
+            models.append({
+                "Model": "SVM",
+                "Rating": "★★★★☆",
+                "Reason": "Suitable for small to medium-sized datasets."
+            })
+
+        models.append({
+            "Model": "Decision Tree",
+            "Rating": "★★★☆☆",
+            "Reason": "Easy to interpret but prone to overfitting."
+        })
+
+    elif problem_type == "Multi-class Classification":
+
+        models.append({
+            "Model": "Random Forest",
+            "Rating": "★★★★★",
+            "Reason": "Strong performance on most multiclass tabular datasets."
+        })
+
+        models.append({
+            "Model": "XGBoost",
+            "Rating": "★★★★★",
+            "Reason": "Excellent multiclass classification performance."
+        })
+
+        models.append({
+            "Model": "LightGBM",
+            "Rating": "★★★★☆",
+            "Reason": "Very fast and efficient for larger datasets."
+        })
+
+        models.append({
+            "Model": "KNN",
+            "Rating": "★★★☆☆",
+            "Reason": "Works well when the dataset is relatively small."
+        })
+
+        models.append({
+            "Model": "Decision Tree",
+            "Rating": "★★★☆☆",
+            "Reason": "Simple and interpretable."
+        })
+
+    else:       # Regression
+
+        models.append({
+            "Model": "Random Forest Regressor",
+            "Rating": "★★★★★",
+            "Reason": "Captures complex non-linear relationships with minimal preprocessing."
+        })
+
+        models.append({
+            "Model": "XGBoost Regressor",
+            "Rating": "★★★★★",
+            "Reason": "One of the strongest regression models for structured data."
+        })
+
+        models.append({
+            "Model": "Linear Regression",
+            "Rating": "★★★★☆",
+            "Reason": "Fast baseline model for approximately linear relationships."
+        })
+
+        models.append({
+            "Model": "Decision Tree Regressor",
+            "Rating": "★★★☆☆",
+            "Reason": "Easy to understand but can overfit."
+        })
+
+        if rows < 10000:
+            models.append({
+                "Model": "SVR",
+                "Rating": "★★★☆☆",
+                "Reason": "Suitable for smaller regression datasets."
+            })
+
+    return models
+
+def select_model(selected_model, problem_type):
+
+    classification_models = {
+        "Logistic Regression": LogisticRegression(),
+        "Decision Tree": DecisionTreeClassifier(random_state=42),
+        "Random Forest": RandomForestClassifier(random_state=42),
+        "KNN": KNeighborsClassifier(),
+        "SVM": SVC()
+    }
+
+    regression_models = {
+        "Linear Regression": LinearRegression(),
+        "Decision Tree Regressor": DecisionTreeRegressor(random_state=42),
+        "Random Forest Regressor": RandomForestRegressor(random_state=42),
+        "SVR": SVR()
+    }
+
+    if "Classification" in problem_type:
+        return classification_models[selected_model]
+
+    return regression_models[selected_model]
 
 st.set_page_config(
     page_title="Sherlock",
@@ -130,6 +290,9 @@ else:
     rows, cols = df.shape
     missing_vals = df.isnull().sum().sum()
     duplicate_rows = df.duplicated().sum()
+
+    if st.button("Preview Dataset"):
+        st.dataframe(df)
 
     st.subheader("Sherlock sees 🔎")
     col1, col2, col3, col4 = st.columns(4)
@@ -211,6 +374,8 @@ else:
     })
     st.dataframe(summary_df, hide_index=True)
 
+    target_col = st.selectbox("Select Target", df.columns)
+
     st.divider()
     st.subheader("Outlier Detection")
     numerical_cols = df.select_dtypes(include="number").columns
@@ -234,8 +399,6 @@ else:
 
     if not outlier_found:
         st.success("No outliers detected in numerical columns.")
-
-    target_col = st.selectbox("Select Target", df.columns)
 
     st.subheader("Encoding Suggestions")
     cat_df = df.select_dtypes(include=["object", "category"])
@@ -356,3 +519,56 @@ else:
             file_name="prepared_dataset.csv",
             mime="text/csv"
         )
+
+    target_dtype = df[target_col].dtype
+    unique_values = df[target_col].nunique()
+    if pd.api.types.is_numeric_dtype(df[target_col]):
+        if unique_values <= 10:
+            problem_type = "Classification"
+        else:
+            problem_type = "Regression"
+
+    else:
+        if unique_values == 2:
+            problem_type = "Binary Classification"
+
+        else:
+            problem_type = "Multi-class Classification"
+
+    st.subheader("Problem Type")
+    st.success(problem_type)
+
+    models = recommend_models(problem_type, df, target_col)
+    st.subheader("Recommended Models")
+
+    for model in models:
+        with st.expander(f"{model['Rating']}  {model['Model']}"):
+            st.write(model["Reason"])
+
+    st.subheader("Select Model")
+
+    selected_model = st.selectbox(
+        "Choose a model to train",
+        [model["Model"] for model in models]
+    )
+
+    for model in models:
+        if model["Model"] == selected_model:
+            st.info(
+                f"⭐ {model['Rating']}\n\n"
+                f"**Why Sherlock recommends it:**\n\n"
+                f"{model['Reason']}"
+            )
+
+    if st.button("Train Model"):
+        X = df_processed.drop(columns=[target_col])
+        y = df_processed[target_col]
+        X_train, X_test, y_train, y_test = train_test_split(X,y,test_size=0.2,random_state=42)
+        st.success("Dataset splitted into training and testing dataset")
+        model = select_model(selected_model, problem_type)
+        model.fit(X_train,y_train)
+        st.success(f"{selected_model} trainned & ready")
+        predictions = model.predict(X_test)
+        st.session_state["trained_model"] = model
+        st.session_state["predictions"] = predictions
+        st.session_state["y_test"] = y_test
