@@ -1,11 +1,99 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
+from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler, LabelEncoder, OneHotEncoder
 
-def load_css():
-    with open("assets/style.css") as f:
-        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+def get_outlier_stats(df, col):
+    """Return IQR-based outlier rows and bounds for a numeric column."""
+    q1 = df[col].quantile(0.25)
+    q3 = df[col].quantile(0.75)
+    iqr = q3 - q1
+    lower_bound = q1 - 1.5 * iqr
+    upper_bound = q3 + 1.5 * iqr
+    outliers = df[(df[col] < lower_bound) | (df[col] > upper_bound)]
+    return outliers, lower_bound, upper_bound
 
-load_css()
+
+def build_recommendation_frame(mapping):
+    """Convert a column-to-recommendation mapping into a displayable table."""
+    if not mapping:
+        return pd.DataFrame(columns=["Feature", "Recommendation"])
+    return pd.DataFrame({
+        "Feature": list(mapping.keys()),
+        "Recommendation": list(mapping.values())
+    })
+
+def handle_missing_values(df, recommendations):
+    df = df.copy()
+    for col, strategy in recommendations.get("missing", {}).items():
+        if col in df.columns:
+            if strategy == "mean":
+                df[col] = df[col].fillna(df[col].mean())
+            elif strategy == "median":
+                df[col] = df[col].fillna(df[col].median())
+            elif strategy == "mode" and not df[col].mode().empty:
+                df[col] = df[col].fillna(df[col].mode()[0])
+            elif strategy == "ffill":
+                df[col] = df[col].ffill()
+            elif strategy == "bfill":
+                df[col] = df[col].bfill()
+    return True, df
+
+
+def handle_duplicate_rows(df, recommendations):
+    df = df.copy()
+    if recommendations.get("duplicates", False):
+        df = df.drop_duplicates().reset_index(drop=True)
+    return True, df
+
+
+def remove_constant_columns(df, recommendations):
+    df = df.copy()
+    constants = recommendations.get("constants", [])
+    df = df.drop(columns=[c for c in constants if c in df.columns], errors="ignore")
+    return True, df
+
+
+def handle_outliers(df, recommendations):
+    df = df.copy()
+    for col, bounds in recommendations.get("outliers", {}).items():
+        if col in df.columns and pd.api.types.is_numeric_dtype(df[col]):
+            lower_bound = bounds.get("lower_bound")
+            upper_bound = bounds.get("upper_bound")
+            if lower_bound is not None and upper_bound is not None:
+                df[col] = np.clip(df[col], lower_bound, upper_bound)
+    return True, df
+
+
+def apply_encoding(df, recommendations):
+    df = df.copy()
+    for col, strategy in recommendations.get("encoding", {}).items():
+        if col in df.columns:
+            if strategy == "Label Encoding":
+                le = LabelEncoder()
+                df[col] = le.fit_transform(df[col].astype(str))
+            elif strategy == "One-Hot Encoding":
+                ohe = OneHotEncoder(sparse_output=False, drop="first", handle_unknown="ignore")
+                encoded_arr = ohe.fit_transform(df[[col]].astype(str))
+                encoded_cols = [f"{col}_{cat}" for cat in ohe.categories_[0][1:]]
+                encoded_df = pd.DataFrame(encoded_arr, columns=encoded_cols, index=df.index)
+                df = df.drop(columns=[col]).join(encoded_df)
+    return True, df
+
+
+def apply_scaling(df, recommendations):
+    df = df.copy()
+    for col, strategy in recommendations.get("scaling", {}).items():
+        if col in df.columns and pd.api.types.is_numeric_dtype(df[col]):
+            if strategy == "RobustScaler":
+                scaler = RobustScaler()
+            elif strategy == "StandardScaler":
+                scaler = StandardScaler()
+            else:
+                scaler = MinMaxScaler()
+            df[[col]] = scaler.fit_transform(df[[col]])
+    return True, df
+
 
 st.set_page_config(
     page_title="Sherlock",
@@ -24,18 +112,24 @@ st.write(
 st.divider()
 st.subheader("📂 Upload Dataset")
 file = st.file_uploader("Upload a CSV")
+
 if not file:
-    st.info("Please Upload a CSV file to let sherlock hop in 🚀")
+    st.info("Please Upload a CSV file to let Sherlock hop in 🚀")
 else:
     df = pd.read_csv(file)
-    #st.dataframe(df)
+
+    recommendations = {
+        "missing": {},
+        "duplicates": False,
+        "constants": [],
+        "outliers": {},
+        "encoding": {},
+        "scaling": {}
+    }
+
     rows, cols = df.shape
     missing_vals = df.isnull().sum().sum()
     duplicate_rows = df.duplicated().sum()
-
-    #st.write(f"Sherlock sees **{rows}** rows and **{cols}** columns.")
-    #st.write(f"Missing values: **{missing_vals}**")
-    #st.write(f"Duplicate rows: **{duplicate_rows}**")
 
     st.subheader("Sherlock sees 🔎")
     col1, col2, col3, col4 = st.columns(4)
@@ -49,270 +143,216 @@ else:
         st.metric("Duplicates", duplicate_rows)
 
     with st.expander("🔍 View Investigation Details"):
-
         st.subheader("Missing Values")
-
         missing = df.isnull().sum()
         missing = missing[missing > 0]
 
         if missing.empty:
             st.success("No missing values found.")
         else:
-            # st.dataframe(missing)
             for col in missing.index:
                 with st.expander(f"{col} has {missing[col]} missing values"):
                     if pd.api.types.is_datetime64_any_dtype(df[col]):
-                        st.write("Column Type : Date\n\nImputation method suggested: Forward fill (ffill) or Backward fill (bfill)")
+                        recommendations["missing"][col] = "ffill"
+                        st.write(f"**Column Type**: Date")
+                        st.write(f"**Missing Values**: {missing[col]}")
+                        st.write("**Recommendation**: Forward fill for time-based continuity.")
                     elif pd.api.types.is_numeric_dtype(df[col]):
-                        st.write("Column Type : Numerical")
-                        if abs(df[col].skew()) < 0.5:
-                            st.write(f"Skewness: {df[col].skew():.2f}\n\nDistribution Type: Normal\n\nImputation method suggested: Mean Imputation")
+                        skew = abs(df[col].skew())
+                        if skew < 0.5:
+                            recommendations["missing"][col] = "mean"
+                            distribution = "Normal"
+                            recommendation = "Mean"
                         else:
-                            st.write(f"Skewness: {df[col].skew():.2f}\n\nDistribution Type: Skewed\n\nImputation method suggested: Median Imputation")
-                    elif df[col].dtype == 'object':
-                        st.write("Column Type : Categorical\n\nImputation method suggested: Mode Imputation")
-        
+                            recommendations["missing"][col] = "median"
+                            distribution = "Skewed"
+                            recommendation = "Median"
+                        st.write(f"**Column Type**: Numerical")
+                        st.write(f"**Missing Values**: {missing[col]}")
+                        st.write(f"**Distribution**: {distribution}")
+                        st.write(f"**Recommendation**: Impute with the {recommendation}.")
+                    else:
+                        recommendations["missing"][col] = "mode"
+                        st.write(f"**Column Type**: Categorical")
+                        st.write(f"**Missing Values**: {missing[col]}")
+                        st.write("**Recommendation**: Use the mode to preserve common values.")
+
         st.divider()
-
         st.subheader("Duplicate Rows")
-
-        duplicates = df.duplicated().sum()
-        duplicate_index = df[df.duplicated(keep=False)].index.tolist()
-
-        if duplicates == 0:
+        if duplicate_rows == 0:
             st.success("No duplicate rows found.")
         else:
-            st.warning(f"{duplicates} duplicate rows found.")
-            with st.expander("🔍 View Duplicate Records"):
-                for idx in duplicate_index:
-                    with st.expander(f"Row {idx}"):
-                        st.dataframe(df.loc[[idx]])
-            st.info("Sherlock's Recommendation :\n- Remove duplicate rows if they were introduced accidentally.\n- Keep them if they represent legitimate repeated events such as transactions, logs or sensor readings.")
+            recommendations["duplicates"] = True
+            st.warning(f"{duplicate_rows} duplicate rows found.")
+            with st.expander("View Duplicate Records"):
+                duplicate_df = df[df.duplicated(keep=False)].copy()
+                if not duplicate_df.empty:
+                    st.dataframe(duplicate_df, use_container_width=True)
+                else:
+                    st.info("No duplicate records to display.")
+            st.write("**Sherlock's Recommendation**: Remove duplicate records to reduce bias and prevent overfitting.")
 
         st.divider()
-
         st.subheader("Constant Columns")
-
-        constant_cols = df.columns[df.nunique() == 1]
-
+        constant_cols = df.columns[df.nunique() == 1].tolist()
         if len(constant_cols) == 0:
             st.success("No constant columns found.")
         else:
-            st.warning(f"{len(constant_cols)} found : {list(constant_cols)}")
-            st.info("Sherlock's Recommendation :\n- Remove these columns before training.\n- They have only one unique value (zero variance).\n- Such features do not help machine learning models distinguish between observations.")
-        
+            recommendations["constants"] = constant_cols
+            st.warning(f"{len(constant_cols)} constant columns found.")
+            st.dataframe(pd.DataFrame({"Constant Column": constant_cols}), hide_index=True)
 
     st.subheader("Column-wise summary")
     summary_df = pd.DataFrame({
-    "Columns":df.columns,
-    "Data Type": df.dtypes,
-    "Missing Values": df.isnull().sum(),
-    "Unique Values": df.nunique()
+        "Columns": df.columns,
+        "Data Type": df.dtypes.astype(str),
+        "Missing Values": df.isnull().sum(),
+        "Unique Values": df.nunique()
     })
-    st.dataframe(summary_df,hide_index=True)
+    st.dataframe(summary_df, hide_index=True)
 
     st.divider()
-
     st.subheader("Outlier Detection")
-
     numerical_cols = df.select_dtypes(include="number").columns
-
     outlier_found = False
 
-    def outlier(col):
-        q1 = df[col].quantile(0.25)
-        q3 = df[col].quantile(0.75)
-
-        iqr = q3 - q1
-
-        lower_bound = q1 - 1.5 * iqr
-        upper_bound = q3 + 1.5 * iqr
-
-        outliers = df[(df[col] < lower_bound) | (df[col] > upper_bound)]
-
-        return outliers, lower_bound, upper_bound
-
-    # for col in numerical_cols:
-
-    #     q1 = df[col].quantile(0.25)
-    #     q3 = df[col].quantile(0.75)
-
-    #     iqr = q3 - q1
-
-    #     lower_bound = q1 - 1.5 * iqr
-    #     upper_bound = q3 + 1.5 * iqr
-
-    #     outliers = df[(df[col] < lower_bound) | (df[col] > upper_bound)]
-
     for col in numerical_cols:
-
-        outliers, lower_bound, upper_bound = outlier(col)
-
+        outliers, lower_bound, upper_bound = get_outlier_stats(df, col)
         if not outliers.empty:
-
             outlier_found = True
-
+            recommendations["outliers"][col] = {
+                "lower_bound": lower_bound,
+                "upper_bound": upper_bound
+            }
             with st.expander(f"{col} has {len(outliers)} outlier(s)"):
-
-                st.write(f"**Lower Bound:** {lower_bound:.2f}")
-                st.write(f"**Upper Bound:** {upper_bound:.2f}")
-
-                st.write("**Outlier Values**")
-                st.dataframe(outliers[[col]], hide_index=True)
-
-                st.info(
-                    "🧠 Sherlock's Recommendation:\n"
-                    "- Investigate these values before removing them.\n"
-                    "- If they are genuine observations, keep them.\n"
-                    "- Otherwise consider capping or removing them using the IQR method."
-                )
+                st.write(f"**Lower Bound**: {lower_bound:.2f}")
+                st.write(f"**Upper Bound**: {upper_bound:.2f}")
+                st.write(f"**Number of Outliers**: {len(outliers)}")
+                st.write("**Preview of Outlier Values**")
+                st.dataframe(outliers[[col]].head(10), hide_index=True, use_container_width=True)
+                st.write("**Sherlock's Recommendation**: Cap extreme values at the IQR bounds during preprocessing.")
 
     if not outlier_found:
         st.success("No outliers detected in numerical columns.")
 
     target_col = st.selectbox("Select Target", df.columns)
 
-    def distribution(target_col):
-        class_count = df[target_col].value_counts()
-        class_percent = df[target_col].value_counts(normalize=True) * 100
-
-        return class_count, class_percent
-    
-    class_count, class_percent = distribution(target_col)
-
-    st.bar_chart(class_count)
-
-    st.write("### Class Distribution")
-    st.dataframe(pd.DataFrame({
-        "Count": class_count,
-        "Percentage": class_percent.round(2)
-    }))
-
-    if class_percent.max() > 80:
-        st.warning("Imbalanced Dataset")
-        st.info("""
-    Sherlock's Recommendation
-
-    - Use Stratified Split
-    - Use F1-score
-    - Consider SMOTE or Class Weights
-    """)
-    else:
-        st.success("Dataset is reasonably balanced")
-        st.info("""
-    Sherlock's Recommendation
-
-    - Proceed with training
-    - Use Stratified Split
-    - Accuracy is acceptable (depending on the problem)
-    """)
-        
-    st.subheader("Correlation Check")
-
-    num_df = df.select_dtypes(include="number")
-    corr = num_df.corr()
-
-    st.dataframe(corr)
-
-    high_corr = False
-    results = []
-
-    for i in range(len(corr.columns)):
-        for j in range(i + 1, len(corr.columns)):
-
-            value = corr.iloc[i, j]
-
-            if abs(value) > 0.8:
-
-                high_corr = True
-
-                results.append({
-                    "Feature 1": corr.columns[i],
-                    "Feature 2": corr.columns[j],
-                    "Correlation": round(value, 2)
-                })
-
-    if not high_corr:
-        st.success("No highly correlated features found.")
-
-    else:
-        st.write("Highly Correlated Features")
-        res = pd.DataFrame(results)
-        st.dataframe(res, hide_index=True)
-
-        st.info("""
-    Sherlock's Recommendation
-
-    - Consider removing one of the highly correlated features.
-    - High correlation can lead to multicollinearity.
-    - This is especially important for Linear and Logistic Regression models.
-    """)
-        
     st.subheader("Encoding Suggestions")
-
-    cat_df = df.select_dtypes(include="object")
-
+    cat_df = df.select_dtypes(include=["object", "category"])
+    high_cardinality_cols = []
     for col in cat_df.columns:
+        if col == target_col:
+            continue
+        count_unique = df[col].nunique()
+        if count_unique == 2:
+            recommendations["encoding"][col] = "Label Encoding"
+        elif count_unique <= 10:
+            recommendations["encoding"][col] = "One-Hot Encoding"
+        else:
+            high_cardinality_cols.append(col)
 
-        with st.expander(col):
+    encoding_frame = build_recommendation_frame(recommendations["encoding"])
+    if not encoding_frame.empty:
+        st.dataframe(encoding_frame, hide_index=True, use_container_width=True)
+    else:
+        st.info("No categorical encoding suggestions available.")
 
-            count_unique = df[col].nunique()
+    if high_cardinality_cols:
+        st.warning(
+            "Sherlock currently does not automatically encode high-cardinality features:  "
+            + ", ".join(high_cardinality_cols)
+        )
 
-            if count_unique == 2:
-                encoding = "Label Encoding"
-
-            elif count_unique <= 10:
-                encoding = "One-Hot Encoding"
-
-            else:
-                encoding = (
-                    "High Cardinality detected.\n"
-                    "Consider Target Encoding or Frequency Encoding.\n"
-                    "Avoid One-Hot Encoding as it may create too many columns."
-                )
-
-            st.write(
-                f"Unique Values: {count_unique}\n\n"
-                f"Recommendation: {encoding}"
-            )
-    
     st.subheader("Scaling Suggestions")
-
     for col in numerical_cols:
-
-        outliers = outlier(col)
-
+        if col == target_col:
+            continue
+        outliers, _, _ = get_outlier_stats(df, col)
         skewness = abs(df[col].skew())
+        if not outliers.empty:
+            recommendations["scaling"][col] = "RobustScaler"
+        elif skewness < 0.5:
+            recommendations["scaling"][col] = "StandardScaler"
+        else:
+            recommendations["scaling"][col] = "MinMaxScaler"
 
-        with st.expander(col):
+    scaling_frame = build_recommendation_frame(recommendations["scaling"])
+    if not scaling_frame.empty:
+        st.dataframe(scaling_frame, hide_index=True, use_container_width=True)
+    else:
+        st.info("No scaling suggestions available.")
 
-            st.write(f"Skewness: {skewness:.2f}")
+    st.divider()
+    if st.button("Prepare Dataset for ML"):
+        total_steps = 6
+        progress = st.progress(0)
+        status_placeholder = st.empty()
+        status_steps = [
+            "Missing Values",
+            "Duplicate Rows",
+            "Constant Columns",
+            "Outliers",
+            "Encoding",
+            "Scaling"
+        ]
+        status_map = {step: "⬜" for step in status_steps}
+        status_text = "Sherlock's Processing Report\n\n" + "\n".join(f"{status_map[step]} {step}" for step in status_steps)
+        status_placeholder.markdown(status_text)
+        st.caption("Sherlock's processing engine is working...")
 
-            if not outliers.empty:
+        df_processed = df.copy()
 
-                st.write("Outliers: Yes")
-                st.write("Recommendation: RobustScaler")
-                st.write(
-                    "Reason: Outliers are present in this feature. "
-                    "RobustScaler uses the median and IQR, making it less sensitive to extreme values."
-                )
+        success, df_processed = handle_missing_values(df_processed, recommendations)
+        if success:
+            progress.progress(int((1 / total_steps) * 100))
+            status_map["Missing Values"] = "✓"
+            status_text = "Sherlock's Processing Report\n\n" + "\n".join(f"{status_map[step]} {step}" for step in status_steps)
+            status_placeholder.markdown(status_text)
 
-            elif skewness < 0.5:
+        success, df_processed = handle_duplicate_rows(df_processed, recommendations)
+        if success:
+            progress.progress(int((2 / total_steps) * 100))
+            status_map["Duplicate Rows"] = "✓"
+            status_text = "Sherlock's Processing Report\n\n" + "\n".join(f"{status_map[step]} {step}" for step in status_steps)
+            status_placeholder.markdown(status_text)
 
-                st.write("Outliers: No")
-                st.write("Distribution: Approximately Normal")
-                st.write("Recommendation: StandardScaler")
-                st.write(
-                    "Reason: The feature is approximately normally distributed "
-                    "and does not contain significant outliers."
-                )
+        success, df_processed = remove_constant_columns(df_processed, recommendations)
+        if success:
+            progress.progress(int((3 / total_steps) * 100))
+            status_map["Constant Columns"] = "✓"
+            status_text = "Sherlock's Processing Report\n\n" + "\n".join(f"{status_map[step]} {step}" for step in status_steps)
+            status_placeholder.markdown(status_text)
 
-            else:
+        success, df_processed = handle_outliers(df_processed, recommendations)
+        if success:
+            progress.progress(int((4 / total_steps) * 100))
+            status_map["Outliers"] = "✓"
+            status_text = "Sherlock's Processing Report\n\n" + "\n".join(f"{status_map[step]} {step}" for step in status_steps)
+            status_placeholder.markdown(status_text)
 
-                st.write("Outliers: No")
-                st.write("Distribution: Skewed")
-                st.write("Recommendation: MinMaxScaler")
-                st.write(
-                    "Reason: The feature is skewed but does not contain significant outliers."
-                )
+        success, df_processed = apply_encoding(df_processed, recommendations)
+        if success:
+            progress.progress(int((5 / total_steps) * 100))
+            status_map["Encoding"] = "✓"
+            status_text = "Sherlock's Processing Report\n\n" + "\n".join(f"{status_map[step]} {step}" for step in status_steps)
+            status_placeholder.markdown(status_text)
 
+        success, df_processed = apply_scaling(df_processed, recommendations)
+        if success:
+            progress.progress(int((6 / total_steps) * 100))
+            status_map["Scaling"] = "✓"
+            status_text = "Sherlock's Processing Report\n\n" + "\n".join(f"{status_map[step]} {step}" for step in status_steps)
+            status_placeholder.markdown(status_text)
+
+        st.success("Dataset successfully prepared for Machine Learning.")
+
+        st.subheader("🕵️ Preprocessed Data Preview")
+        st.dataframe(df_processed.head(10))
+
+        csv_data = df_processed.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "Download Prepared Dataset",
+            data=csv_data,
+            file_name="prepared_dataset.csv",
+            mime="text/csv"
+        )
