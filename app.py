@@ -561,6 +561,7 @@ else:
             )
 
     if st.button("Train Model"):
+        df_processed = df_processed.copy()
         X = df_processed.drop(columns=[target_col])
         y = df_processed[target_col]
         X_train, X_test, y_train, y_test = train_test_split(X,y,test_size=0.2,random_state=42)
