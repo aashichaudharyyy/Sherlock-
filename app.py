@@ -617,14 +617,11 @@ else:
         y_test = st.session_state["y_test"]
         predictions = st.session_state["predictions"]
 
-        # Compute metrics depending on problem type (classification vs regression)
         if "Regression" in problem_type:
-            # Regression metrics
             mse = mean_squared_error(y_test, predictions)
             rmse = np.sqrt(mse)
             mae = mean_absolute_error(y_test, predictions)
             r2 = r2_score(y_test, predictions)
-            # Use R2 as the leaderboard 'Accuracy' proxy for regressors
             accuracy = r2
             precision = recall = f1 = float("nan")
 
@@ -634,14 +631,12 @@ else:
             c3.metric("R2", f"{r2:.2%}")
             c4.metric("", "")
         else:
-            # Classification metrics - be defensive if predictions are continuous
             try:
                 accuracy = accuracy_score(y_test, predictions)
                 precision = precision_score(y_test, predictions, average="weighted", zero_division=0)
                 recall = recall_score(y_test, predictions, average="weighted", zero_division=0)
                 f1 = f1_score(y_test, predictions, average="weighted", zero_division=0)
             except ValueError:
-                # Attempt to coerce predictions to nearest class labels
                 try:
                     preds_round = np.rint(predictions).astype(y_test.dtype)
                     accuracy = accuracy_score(y_test, preds_round)
@@ -655,7 +650,6 @@ else:
                     st.warning("Unable to compute classification metrics for these predictions.")
 
             c1, c2, c3, c4 = st.columns(4)
-            # Protect against NaN values when formatting percentages
             def fmt(x):
                 return f"{x:.2%}" if isinstance(x, (int, float)) and not np.isnan(x) else "N/A"
 
@@ -663,7 +657,6 @@ else:
             c2.metric("Precision", fmt(precision))
             c3.metric("Recall", fmt(recall))
             c4.metric("F1 Score", fmt(f1))
-        # Update leaderboard: remove existing entry for this model and append latest metrics
         st.session_state["trained_models"] = [
             m for m in st.session_state["trained_models"] if m.get("Model") != selected_model
         ]
@@ -675,13 +668,11 @@ else:
             "F1 Score": f1
         })
     
-    # Display leaderboard if any models have been trained this session
     if st.session_state.get("trained_models"):
         leaderboard = pd.DataFrame(st.session_state["trained_models"])
         leaderboard = leaderboard.sort_values("Accuracy", ascending=False)
         st.dataframe(leaderboard, hide_index=True, use_container_width=True)
 
-        # Sherlock verdict: best model
         best = leaderboard.iloc[0]
         st.markdown("🏆 Sherlock's Verdict")
         st.write(f"{best['Model']} is currently the best-performing model with {best['Accuracy']:.2%} accuracy.")
