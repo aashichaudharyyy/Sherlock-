@@ -7,6 +7,15 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler, LabelEncoder, OneHotEncoder
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    mean_squared_error,
+    mean_absolute_error,
+    r2_score,
+)
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.metrics import (
@@ -20,7 +29,7 @@ from sklearn.metrics import (
     r2_score
 )
 from sklearn.model_selection import train_test_split
-
+import matplotlib.pyplot as plt
 
 def get_outlier_stats(df, col):
     """Return IQR-based outlier rows and bounds for a numeric column."""
@@ -262,6 +271,10 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Initialize leaderboard once per session
+if "trained_models" not in st.session_state:
+    st.session_state["trained_models"] = []
 
 st.title("🕵️ Sherlock")
 st.caption("Your AI Data Detective")
@@ -580,4 +593,148 @@ else:
         st.session_state["trained_model"] = model
         st.session_state["predictions"] = predictions
         st.session_state["y_test"] = y_test
+        st.session_state["processed_df"] = df_processed.copy()
+        st.session_state["feature_columns"] = X.columns.tolist()
+        st.session_state["target_column"] = target_col
+        st.session_state["problem_type"] = problem_type
+        try:
+            st.session_state["target_encoder"] = target_encoder
+        except NameError:
+            st.session_state["target_encoder"] = None
 
+        if hasattr(model, "feature_importances_"):
+            st.subheader("Feature Importance")
+            importance = model.feature_importances_
+            importance_df = pd.DataFrame({"Feature": X.columns,"Importance": importance})
+            importance_df = importance_df.sort_values(by="Importance", ascending=False)
+            st.dataframe(importance_df,hide_index=True,use_container_width=True)
+            fig, ax = plt.subplots(figsize=(8,5))
+            ax.barh(importance_df["Feature"],importance_df["Importance"])
+            ax.invert_yaxis()
+            ax.set_xlabel("Importance")
+            ax.set_title("Feature Importance")
+            st.pyplot(fig)
+        y_test = st.session_state["y_test"]
+        predictions = st.session_state["predictions"]
+
+        # Compute metrics depending on problem type (classification vs regression)
+        if "Regression" in problem_type:
+            # Regression metrics
+            mse = mean_squared_error(y_test, predictions)
+            rmse = np.sqrt(mse)
+            mae = mean_absolute_error(y_test, predictions)
+            r2 = r2_score(y_test, predictions)
+            # Use R2 as the leaderboard 'Accuracy' proxy for regressors
+            accuracy = r2
+            precision = recall = f1 = float("nan")
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("RMSE", f"{rmse:.4f}")
+            c2.metric("MAE", f"{mae:.4f}")
+            c3.metric("R2", f"{r2:.2%}")
+            c4.metric("", "")
+        else:
+            # Classification metrics - be defensive if predictions are continuous
+            try:
+                accuracy = accuracy_score(y_test, predictions)
+                precision = precision_score(y_test, predictions, average="weighted", zero_division=0)
+                recall = recall_score(y_test, predictions, average="weighted", zero_division=0)
+                f1 = f1_score(y_test, predictions, average="weighted", zero_division=0)
+            except ValueError:
+                # Attempt to coerce predictions to nearest class labels
+                try:
+                    preds_round = np.rint(predictions).astype(y_test.dtype)
+                    accuracy = accuracy_score(y_test, preds_round)
+                    precision = precision_score(y_test, preds_round, average="weighted", zero_division=0)
+                    recall = recall_score(y_test, preds_round, average="weighted", zero_division=0)
+                    f1 = f1_score(y_test, preds_round, average="weighted", zero_division=0)
+                    predictions = preds_round
+                    st.warning("Predictions were continuous; rounded to nearest class for metric calculation.")
+                except Exception:
+                    accuracy = precision = recall = f1 = float("nan")
+                    st.warning("Unable to compute classification metrics for these predictions.")
+
+            c1, c2, c3, c4 = st.columns(4)
+            # Protect against NaN values when formatting percentages
+            def fmt(x):
+                return f"{x:.2%}" if isinstance(x, (int, float)) and not np.isnan(x) else "N/A"
+
+            c1.metric("Accuracy", fmt(accuracy))
+            c2.metric("Precision", fmt(precision))
+            c3.metric("Recall", fmt(recall))
+            c4.metric("F1 Score", fmt(f1))
+        # Update leaderboard: remove existing entry for this model and append latest metrics
+        st.session_state["trained_models"] = [
+            m for m in st.session_state["trained_models"] if m.get("Model") != selected_model
+        ]
+        st.session_state["trained_models"].append({
+            "Model": selected_model,
+            "Accuracy": accuracy,
+            "Precision": precision,
+            "Recall": recall,
+            "F1 Score": f1
+        })
+    
+    # Display leaderboard if any models have been trained this session
+    if st.session_state.get("trained_models"):
+        leaderboard = pd.DataFrame(st.session_state["trained_models"])
+        leaderboard = leaderboard.sort_values("Accuracy", ascending=False)
+        st.dataframe(leaderboard, hide_index=True, use_container_width=True)
+
+        # Sherlock verdict: best model
+        best = leaderboard.iloc[0]
+        st.markdown("🏆 Sherlock's Verdict")
+        st.write(f"{best['Model']} is currently the best-performing model with {best['Accuracy']:.2%} accuracy.")
+    
+
+
+    st.divider()
+
+    st.header("🔮 Predict on New Dataset")
+
+    prediction_file = st.file_uploader(
+        "Upload CSV for Prediction",
+        type=["csv"],
+        key="prediction_csv"
+    )
+
+    if prediction_file is not None:
+
+        if "trained_model" not in st.session_state:
+
+            st.warning("Please train a model first.")
+
+        else:
+
+            model = st.session_state["trained_model"]
+            feature_columns = st.session_state["feature_columns"]
+            encoder = st.session_state.get("target_encoder")
+
+            new_df = pd.read_csv(prediction_file)
+
+            st.subheader("Uploaded Dataset")
+
+            st.dataframe(new_df.head())
+
+            new_df = new_df.reindex(columns=feature_columns)
+
+            predictions = model.predict(new_df)
+
+            if encoder is not None:
+                predictions = encoder.inverse_transform(predictions)
+
+            result_df = new_df.copy()
+            result_df["Prediction"] = predictions
+
+            st.subheader("Prediction Results")
+
+            st.dataframe(result_df)
+
+            csv = result_df.to_csv(index=False).encode("utf-8")
+
+            st.download_button(
+                "Download Predictions",
+                data=csv,
+                file_name="predictions.csv",
+                mime="text/csv"
+            )
