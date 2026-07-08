@@ -2,6 +2,7 @@ from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC, SVR
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
+from xgboost import XGBClassifier, XGBRegressor
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -20,20 +21,6 @@ from sklearn.metrics import (
 )
 from sklearn.model_selection import train_test_split
 
-classification_models = {
-    "Logistic Regression": LogisticRegression(),
-    "Decision Tree": DecisionTreeClassifier(random_state=42),
-    "Random Forest": RandomForestClassifier(random_state=42),
-    "KNN": KNeighborsClassifier(),
-    "SVM": SVC(probability=True)
-}
-
-regression_models = {
-    "Linear Regression": LinearRegression(),
-    "Decision Tree Regressor": DecisionTreeRegressor(random_state=42),
-    "Random Forest Regressor": RandomForestRegressor(random_state=42),
-    "SVR": SVR()
-}
 
 def get_outlier_stats(df, col):
     """Return IQR-based outlier rows and bounds for a numeric column."""
@@ -104,6 +91,8 @@ def apply_encoding(df, recommendations):
             if strategy == "Label Encoding":
                 le = LabelEncoder()
                 df[col] = le.fit_transform(df[col].astype(str))
+            elif strategy == "High Cardinality":
+                df = df.drop(columns=[col])
             elif strategy == "One-Hot Encoding":
                 ohe = OneHotEncoder(sparse_output=False, drop="first", handle_unknown="ignore")
                 encoded_arr = ohe.fit_transform(df[[col]].astype(str))
@@ -240,20 +229,32 @@ def select_model(selected_model, problem_type):
         "Decision Tree": DecisionTreeClassifier(random_state=42),
         "Random Forest": RandomForestClassifier(random_state=42),
         "KNN": KNeighborsClassifier(),
-        "SVM": SVC()
+        "SVM": SVC(probability=True),
+        "XGBoost": XGBClassifier(random_state=42,eval_metric="logloss")
     }
 
     regression_models = {
         "Linear Regression": LinearRegression(),
         "Decision Tree Regressor": DecisionTreeRegressor(random_state=42),
         "Random Forest Regressor": RandomForestRegressor(random_state=42),
-        "SVR": SVR()
+        "SVR": SVR(),
+        "XGBoost": XGBRegressor(random_state=42)
     }
 
     if "Classification" in problem_type:
         return classification_models[selected_model]
 
     return regression_models[selected_model]
+
+def prepare_target(y, problem_type):
+
+    if "Classification" in problem_type:
+        if not pd.api.types.is_numeric_dtype(y):
+            encoder = LabelEncoder()
+            y = encoder.fit_transform(y)
+            return y, encoder
+
+    return y, None
 
 st.set_page_config(
     page_title="Sherlock",
@@ -412,7 +413,7 @@ else:
         elif count_unique <= 10:
             recommendations["encoding"][col] = "One-Hot Encoding"
         else:
-            high_cardinality_cols.append(col)
+            recommendations["encoding"][col] = "High Cardinality"
 
     encoding_frame = build_recommendation_frame(recommendations["encoding"])
     if not encoding_frame.empty:
@@ -420,11 +421,6 @@ else:
     else:
         st.info("No categorical encoding suggestions available.")
 
-    if high_cardinality_cols:
-        st.warning(
-            "Sherlock currently does not automatically encode high-cardinality features:  "
-            + ", ".join(high_cardinality_cols)
-        )
 
     st.subheader("Scaling Suggestions")
     for col in numerical_cols:
@@ -519,6 +515,7 @@ else:
             file_name="prepared_dataset.csv",
             mime="text/csv"
         )
+        st.session_state["df_processed"] = df_processed
 
     target_dtype = df[target_col].dtype
     unique_values = df[target_col].nunique()
@@ -561,15 +558,26 @@ else:
             )
 
     if st.button("Train Model"):
-        df_processed = df_processed.copy()
+        if "df_processed" not in st.session_state:
+            st.error("Please click 'Prepare Dataset for ML' first.")
+            st.stop()
+
+        df_processed = st.session_state["df_processed"]
+
         X = df_processed.drop(columns=[target_col])
         y = df_processed[target_col]
+
+        y, target_encoder = prepare_target(y, problem_type)
+
         X_train, X_test, y_train, y_test = train_test_split(X,y,test_size=0.2,random_state=42)
         st.success("Dataset splitted into training and testing dataset")
+        
         model = select_model(selected_model, problem_type)
         model.fit(X_train,y_train)
         st.success(f"{selected_model} trainned & ready")
+        
         predictions = model.predict(X_test)
         st.session_state["trained_model"] = model
         st.session_state["predictions"] = predictions
         st.session_state["y_test"] = y_test
+
