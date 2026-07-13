@@ -1,41 +1,221 @@
 # 🕵️ Sherlock
 
-Sherlock is an intelligent dataset investigation platform that helps data scientists inspect datasets, identify data quality issues, and receive explainable preprocessing recommendations before building machine learning models.
+Sherlock is a Machine Learning data preprocessing and model recommendation platform that analyzes raw datasets, recommends preprocessing steps, prepares data for Machine Learning, trains multiple ML models, evaluates their performance, and predicts outcomes on unseen data.
 
-## ✨ Features
-
-- 📂 Upload CSV datasets
-- 📊 Dataset overview (rows, columns, memory usage)
-- 📋 Column-wise summary
-- 🔍 Missing value detection
-- 🧠 Smart imputation recommendations
-- ⚠️ Duplicate row detection
-- 📅 Datetime, numerical & categorical column identification
-
-## 🚀 Coming Soon
-
-- Outlier detection (IQR)
-- Duplicate column detection
-- Constant column detection
-- Identifier & high-cardinality detection
-- Target column suggestion
-- Class imbalance detection
-- Correlation analysis
-- One-click data cleaning
-- ML model recommendations
-- PDF investigation reports
-
-## 🛠️ Tech Stack
-
-- Python
-- Pandas
-- NumPy
-- Streamlit
-
-## 🎯 Goal
-
-Instead of only showing statistics, Sherlock explains **what is wrong with your dataset, why it matters, and how to fix it**.
+Built completely from scratch while learning Machine Learning fundamentals.
 
 ---
 
-⭐ *Still under active development. Every feature is being built from scratch while learning and documenting the process.*
+# ✨ Features
+
+## 📂 Dataset Investigation
+
+- Upload CSV datasets
+- Dataset preview
+- Dataset overview (Rows, Columns, Missing Values, Duplicates)
+- Column-wise summary
+- Automatic problem type detection
+  - Binary Classification
+  - Multi-class Classification
+  - Regression
+
+---
+
+## 🔎 Data Quality Analysis
+
+### Missing Value Detection
+
+- Detects missing values in every column
+- Suggests intelligent imputation:
+  - Mean
+  - Median
+  - Mode
+  - Forward Fill
+  - Backward Fill
+
+### Duplicate Detection
+
+- Detects duplicate rows
+- Displays duplicate records
+- Recommends removal
+
+### Constant Column Detection
+
+- Detects columns having only one unique value
+- Recommends removal
+
+### Outlier Detection
+
+- Detects outliers using the IQR method
+- Shows:
+  - Lower Bound
+  - Upper Bound
+  - Number of Outliers
+  - Preview of Outlier Values
+- Recommends capping using IQR bounds
+
+---
+
+## 🧠 Smart Preprocessing Recommendations
+
+### Encoding Suggestions
+
+Automatically recommends:
+
+- Label Encoding
+- One-Hot Encoding
+- High Cardinality Detection
+
+### Scaling Suggestions
+
+Automatically selects:
+
+- StandardScaler
+- RobustScaler
+- MinMaxScaler
+
+based on data distribution and outliers.
+
+---
+
+## ⚙️ Automated Data Cleaning Pipeline
+
+One-click preprocessing that performs:
+
+- Missing Value Handling
+- Duplicate Removal
+- Constant Column Removal
+- Outlier Capping
+- Feature Encoding
+- Feature Scaling
+
+with a live processing tracker.
+
+---
+
+## 🤖 Machine Learning
+
+Automatically recommends models based on the detected problem type.
+
+### Classification Models
+
+- Logistic Regression
+- Decision Tree
+- Random Forest
+- K-Nearest Neighbors (KNN)
+- Support Vector Machine (SVM)
+- XGBoost
+
+### Regression Models
+
+- Linear Regression
+- Decision Tree Regressor
+- Random Forest Regressor
+- Support Vector Regressor (SVR)
+- XGBoost Regressor
+
+---
+
+## 📈 Model Evaluation
+
+Displays model performance using:
+
+### Classification
+
+- Accuracy
+- Precision
+- Recall
+- F1 Score
+
+### Regression
+
+- RMSE
+- MAE
+- R² Score
+
+---
+
+## 🏆 Model Leaderboard
+
+Keeps track of every trained model.
+
+Displays:
+
+- Model Name
+- Accuracy / R²
+- Precision
+- Recall
+- F1 Score
+
+Automatically highlights the current best-performing model.
+
+---
+
+## 📊 Feature Importance
+
+For tree-based models Sherlock displays:
+
+- Ranked Feature Importance Table
+- Feature Importance Bar Chart
+
+---
+
+## 🔮 Prediction Engine
+
+Upload a new dataset to:
+
+- Predict outcomes using the trained model
+- View prediction results
+- Download predictions as CSV
+
+---
+
+# 🛠️ Tech Stack
+
+### Languages
+
+- Python
+
+### Libraries
+
+- Pandas
+- NumPy
+- Scikit-learn
+- XGBoost
+- Matplotlib
+- Streamlit
+
+---
+
+# 📚 Machine Learning Concepts Covered
+
+Sherlock implements and demonstrates:
+
+- Data Cleaning
+- Missing Value Imputation
+- Duplicate Handling
+- Constant Feature Removal
+- Outlier Detection (IQR)
+- Feature Encoding
+- Feature Scaling
+- Problem Type Detection
+- Train-Test Split
+- Model Selection
+- Classification
+- Regression
+- Feature Importance
+- Model Evaluation Metrics
+- Model Comparison
+- Prediction on Unseen Data
+
+---
+
+# 🎯 Goal
+
+Sherlock isn't just another AutoML tool.
+
+It is being built as a learning-first project to understand every stage of the Machine Learning pipeline—from raw data inspection to model deployment—while implementing each concept from scratch instead of relying on black-box automation.
+
+---
+
+Every feature is built incrementally while learning Machine Learning.
