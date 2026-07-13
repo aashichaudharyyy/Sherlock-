@@ -30,240 +30,10 @@ from sklearn.metrics import (
 )
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
-
-def get_outlier_stats(df, col):
-    """Return IQR-based outlier rows and bounds for a numeric column."""
-    q1 = df[col].quantile(0.25)
-    q3 = df[col].quantile(0.75)
-    iqr = q3 - q1
-    lower_bound = q1 - 1.5 * iqr
-    upper_bound = q3 + 1.5 * iqr
-    outliers = df[(df[col] < lower_bound) | (df[col] > upper_bound)]
-    return outliers, lower_bound, upper_bound
-
-
-def build_recommendation_frame(mapping):
-    """Convert a column-to-recommendation mapping into a displayable table."""
-    if not mapping:
-        return pd.DataFrame(columns=["Feature", "Recommendation"])
-    return pd.DataFrame({
-        "Feature": list(mapping.keys()),
-        "Recommendation": list(mapping.values())
-    })
-
-def handle_missing_values(df, recommendations):
-    df = df.copy()
-    for col, strategy in recommendations.get("missing", {}).items():
-        if col in df.columns:
-            if strategy == "mean":
-                df[col] = df[col].fillna(df[col].mean())
-            elif strategy == "median":
-                df[col] = df[col].fillna(df[col].median())
-            elif strategy == "mode" and not df[col].mode().empty:
-                df[col] = df[col].fillna(df[col].mode()[0])
-            elif strategy == "ffill":
-                df[col] = df[col].ffill()
-            elif strategy == "bfill":
-                df[col] = df[col].bfill()
-    return True, df
-
-
-def handle_duplicate_rows(df, recommendations):
-    df = df.copy()
-    if recommendations.get("duplicates", False):
-        df = df.drop_duplicates().reset_index(drop=True)
-    return True, df
-
-
-def remove_constant_columns(df, recommendations):
-    df = df.copy()
-    constants = recommendations.get("constants", [])
-    df = df.drop(columns=[c for c in constants if c in df.columns], errors="ignore")
-    return True, df
-
-
-def handle_outliers(df, recommendations):
-    df = df.copy()
-    for col, bounds in recommendations.get("outliers", {}).items():
-        if col in df.columns and pd.api.types.is_numeric_dtype(df[col]):
-            lower_bound = bounds.get("lower_bound")
-            upper_bound = bounds.get("upper_bound")
-            if lower_bound is not None and upper_bound is not None:
-                df[col] = np.clip(df[col], lower_bound, upper_bound)
-    return True, df
-
-
-def apply_encoding(df, recommendations):
-    df = df.copy()
-    for col, strategy in recommendations.get("encoding", {}).items():
-        if col in df.columns:
-            if strategy == "Label Encoding":
-                le = LabelEncoder()
-                df[col] = le.fit_transform(df[col].astype(str))
-            elif strategy == "High Cardinality":
-                df = df.drop(columns=[col])
-            elif strategy == "One-Hot Encoding":
-                ohe = OneHotEncoder(sparse_output=False, drop="first", handle_unknown="ignore")
-                encoded_arr = ohe.fit_transform(df[[col]].astype(str))
-                encoded_cols = [f"{col}_{cat}" for cat in ohe.categories_[0][1:]]
-                encoded_df = pd.DataFrame(encoded_arr, columns=encoded_cols, index=df.index)
-                df = df.drop(columns=[col]).join(encoded_df)
-    return True, df
-
-
-def apply_scaling(df, recommendations):
-    df = df.copy()
-    for col, strategy in recommendations.get("scaling", {}).items():
-        if col in df.columns and pd.api.types.is_numeric_dtype(df[col]):
-            if strategy == "RobustScaler":
-                scaler = RobustScaler()
-            elif strategy == "StandardScaler":
-                scaler = StandardScaler()
-            else:
-                scaler = MinMaxScaler()
-            df[[col]] = scaler.fit_transform(df[[col]])
-    return True, df
-
-def recommend_models(problem_type, df, target_col):    
-    models = []
-
-    rows, cols = df.shape
-    categorical = len(df.select_dtypes(include=["object", "category"]).columns)
-    imbalance = df[target_col].value_counts(normalize=True).max()
-
-    if problem_type == "Binary Classification":
-
-        models.append({
-            "Model": "Random Forest",
-            "Rating": "★★★★★",
-            "Reason": "Excellent baseline model. Handles mixed features and captures non-linear relationships."
-        })
-
-        models.append({
-            "Model": "XGBoost",
-            "Rating": "★★★★★",
-            "Reason": "High accuracy and performs well on structured/tabular datasets."
-        })
-
-        models.append({
-            "Model": "Logistic Regression",
-            "Rating": "★★★★☆",
-            "Reason": "Simple, fast and highly interpretable baseline classifier."
-        })
-
-        if rows < 10000:
-            models.append({
-                "Model": "SVM",
-                "Rating": "★★★★☆",
-                "Reason": "Suitable for small to medium-sized datasets."
-            })
-
-        models.append({
-            "Model": "Decision Tree",
-            "Rating": "★★★☆☆",
-            "Reason": "Easy to interpret but prone to overfitting."
-        })
-
-    elif problem_type == "Multi-class Classification":
-
-        models.append({
-            "Model": "Random Forest",
-            "Rating": "★★★★★",
-            "Reason": "Strong performance on most multiclass tabular datasets."
-        })
-
-        models.append({
-            "Model": "XGBoost",
-            "Rating": "★★★★★",
-            "Reason": "Excellent multiclass classification performance."
-        })
-
-        models.append({
-            "Model": "LightGBM",
-            "Rating": "★★★★☆",
-            "Reason": "Very fast and efficient for larger datasets."
-        })
-
-        models.append({
-            "Model": "KNN",
-            "Rating": "★★★☆☆",
-            "Reason": "Works well when the dataset is relatively small."
-        })
-
-        models.append({
-            "Model": "Decision Tree",
-            "Rating": "★★★☆☆",
-            "Reason": "Simple and interpretable."
-        })
-
-    else:       # Regression
-
-        models.append({
-            "Model": "Random Forest Regressor",
-            "Rating": "★★★★★",
-            "Reason": "Captures complex non-linear relationships with minimal preprocessing."
-        })
-
-        models.append({
-            "Model": "XGBoost Regressor",
-            "Rating": "★★★★★",
-            "Reason": "One of the strongest regression models for structured data."
-        })
-
-        models.append({
-            "Model": "Linear Regression",
-            "Rating": "★★★★☆",
-            "Reason": "Fast baseline model for approximately linear relationships."
-        })
-
-        models.append({
-            "Model": "Decision Tree Regressor",
-            "Rating": "★★★☆☆",
-            "Reason": "Easy to understand but can overfit."
-        })
-
-        if rows < 10000:
-            models.append({
-                "Model": "SVR",
-                "Rating": "★★★☆☆",
-                "Reason": "Suitable for smaller regression datasets."
-            })
-
-    return models
-
-def select_model(selected_model, problem_type):
-
-    classification_models = {
-        "Logistic Regression": LogisticRegression(),
-        "Decision Tree": DecisionTreeClassifier(random_state=42),
-        "Random Forest": RandomForestClassifier(random_state=42),
-        "KNN": KNeighborsClassifier(),
-        "SVM": SVC(probability=True),
-        "XGBoost": XGBClassifier(random_state=42,eval_metric="logloss")
-    }
-
-    regression_models = {
-        "Linear Regression": LinearRegression(),
-        "Decision Tree Regressor": DecisionTreeRegressor(random_state=42),
-        "Random Forest Regressor": RandomForestRegressor(random_state=42),
-        "SVR": SVR(),
-        "XGBoost": XGBRegressor(random_state=42)
-    }
-
-    if "Classification" in problem_type:
-        return classification_models[selected_model]
-
-    return regression_models[selected_model]
-
-def prepare_target(y, problem_type):
-
-    if "Classification" in problem_type:
-        if not pd.api.types.is_numeric_dtype(y):
-            encoder = LabelEncoder()
-            y = encoder.fit_transform(y)
-            return y, encoder
-
-    return y, None
+import joblib
+import io
+from src import preprocessing,recommendations,training,utils
+import shap
 
 st.set_page_config(
     page_title="Sherlock",
@@ -272,7 +42,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Initialize leaderboard once per session
+
 if "trained_models" not in st.session_state:
     st.session_state["trained_models"] = []
 
@@ -292,7 +62,7 @@ if not file:
 else:
     df = pd.read_csv(file)
 
-    recommendations = {
+    prep_plan = {
         "missing": {},
         "duplicates": False,
         "constants": [],
@@ -330,18 +100,18 @@ else:
             for col in missing.index:
                 with st.expander(f"{col} has {missing[col]} missing values"):
                     if pd.api.types.is_datetime64_any_dtype(df[col]):
-                        recommendations["missing"][col] = "ffill"
+                        prep_plan["missing"][col] = "ffill"
                         st.write(f"**Column Type**: Date")
                         st.write(f"**Missing Values**: {missing[col]}")
                         st.write("**Recommendation**: Forward fill for time-based continuity.")
                     elif pd.api.types.is_numeric_dtype(df[col]):
                         skew = abs(df[col].skew())
                         if skew < 0.5:
-                            recommendations["missing"][col] = "mean"
+                            prep_plan["missing"][col] = "mean"
                             distribution = "Normal"
                             recommendation = "Mean"
                         else:
-                            recommendations["missing"][col] = "median"
+                            prep_plan["missing"][col] = "median"
                             distribution = "Skewed"
                             recommendation = "Median"
                         st.write(f"**Column Type**: Numerical")
@@ -349,7 +119,7 @@ else:
                         st.write(f"**Distribution**: {distribution}")
                         st.write(f"**Recommendation**: Impute with the {recommendation}.")
                     else:
-                        recommendations["missing"][col] = "mode"
+                        prep_plan["missing"][col] = "mode"
                         st.write(f"**Column Type**: Categorical")
                         st.write(f"**Missing Values**: {missing[col]}")
                         st.write("**Recommendation**: Use the mode to preserve common values.")
@@ -359,7 +129,7 @@ else:
         if duplicate_rows == 0:
             st.success("No duplicate rows found.")
         else:
-            recommendations["duplicates"] = True
+            prep_plan["duplicates"] = True
             st.warning(f"{duplicate_rows} duplicate rows found.")
             with st.expander("View Duplicate Records"):
                 duplicate_df = df[df.duplicated(keep=False)].copy()
@@ -375,7 +145,7 @@ else:
         if len(constant_cols) == 0:
             st.success("No constant columns found.")
         else:
-            recommendations["constants"] = constant_cols
+            prep_plan["constants"] = constant_cols
             st.warning(f"{len(constant_cols)} constant columns found.")
             st.dataframe(pd.DataFrame({"Constant Column": constant_cols}), hide_index=True)
 
@@ -396,10 +166,10 @@ else:
     outlier_found = False
 
     for col in numerical_cols:
-        outliers, lower_bound, upper_bound = get_outlier_stats(df, col)
+        outliers, lower_bound, upper_bound = utils.get_outlier_stats(df, col)
         if not outliers.empty:
             outlier_found = True
-            recommendations["outliers"][col] = {
+            prep_plan["outliers"][col] = {
                 "lower_bound": lower_bound,
                 "upper_bound": upper_bound
             }
@@ -422,13 +192,13 @@ else:
             continue
         count_unique = df[col].nunique()
         if count_unique == 2:
-            recommendations["encoding"][col] = "Label Encoding"
+            prep_plan["encoding"][col] = "Label Encoding"
         elif count_unique <= 10:
-            recommendations["encoding"][col] = "One-Hot Encoding"
+            prep_plan["encoding"][col] = "One-Hot Encoding"
         else:
-            recommendations["encoding"][col] = "High Cardinality"
+            prep_plan["encoding"][col] = "High Cardinality"
 
-    encoding_frame = build_recommendation_frame(recommendations["encoding"])
+    encoding_frame = utils.build_recommendation_frame(prep_plan["encoding"])
     if not encoding_frame.empty:
         st.dataframe(encoding_frame, hide_index=True, use_container_width=True)
     else:
@@ -439,22 +209,26 @@ else:
     for col in numerical_cols:
         if col == target_col:
             continue
-        outliers, _, _ = get_outlier_stats(df, col)
+        outliers, _, _ = utils.get_outlier_stats(df, col)
         skewness = abs(df[col].skew())
         if not outliers.empty:
-            recommendations["scaling"][col] = "RobustScaler"
+            prep_plan["scaling"][col] = "RobustScaler"
         elif skewness < 0.5:
-            recommendations["scaling"][col] = "StandardScaler"
+            prep_plan["scaling"][col] = "StandardScaler"
         else:
-            recommendations["scaling"][col] = "MinMaxScaler"
+            prep_plan["scaling"][col] = "MinMaxScaler"
 
-    scaling_frame = build_recommendation_frame(recommendations["scaling"])
+    scaling_frame = utils.build_recommendation_frame(prep_plan["scaling"])
     if not scaling_frame.empty:
         st.dataframe(scaling_frame, hide_index=True, use_container_width=True)
     else:
         st.info("No scaling suggestions available.")
 
     st.divider()
+    # ==========================================
+    # MODIFICATION 1: Save the preprocessing plan to session state during training
+    # Locate this block inside your original code where "Prepare Dataset for ML" finishes
+    # ==========================================
     if st.button("Prepare Dataset for ML"):
         total_steps = 6
         progress = st.progress(0)
@@ -474,42 +248,42 @@ else:
 
         df_processed = df.copy()
 
-        success, df_processed = handle_missing_values(df_processed, recommendations)
+        success, df_processed = preprocessing.handle_missing_values(df_processed, prep_plan)
         if success:
             progress.progress(int((1 / total_steps) * 100))
             status_map["Missing Values"] = "✓"
             status_text = "Sherlock's Processing Report\n\n" + "\n".join(f"{status_map[step]} {step}" for step in status_steps)
             status_placeholder.markdown(status_text)
 
-        success, df_processed = handle_duplicate_rows(df_processed, recommendations)
+        success, df_processed = preprocessing.handle_duplicate_rows(df_processed, prep_plan)
         if success:
             progress.progress(int((2 / total_steps) * 100))
             status_map["Duplicate Rows"] = "✓"
             status_text = "Sherlock's Processing Report\n\n" + "\n".join(f"{status_map[step]} {step}" for step in status_steps)
             status_placeholder.markdown(status_text)
 
-        success, df_processed = remove_constant_columns(df_processed, recommendations)
+        success, df_processed = preprocessing.remove_constant_columns(df_processed, prep_plan)
         if success:
             progress.progress(int((3 / total_steps) * 100))
             status_map["Constant Columns"] = "✓"
             status_text = "Sherlock's Processing Report\n\n" + "\n".join(f"{status_map[step]} {step}" for step in status_steps)
             status_placeholder.markdown(status_text)
 
-        success, df_processed = handle_outliers(df_processed, recommendations)
+        success, df_processed = preprocessing.handle_outliers(df_processed, prep_plan)
         if success:
             progress.progress(int((4 / total_steps) * 100))
             status_map["Outliers"] = "✓"
             status_text = "Sherlock's Processing Report\n\n" + "\n".join(f"{status_map[step]} {step}" for step in status_steps)
             status_placeholder.markdown(status_text)
 
-        success, df_processed = apply_encoding(df_processed, recommendations)
+        success, df_processed = preprocessing.apply_encoding(df_processed, prep_plan)
         if success:
             progress.progress(int((5 / total_steps) * 100))
             status_map["Encoding"] = "✓"
             status_text = "Sherlock's Processing Report\n\n" + "\n".join(f"{status_map[step]} {step}" for step in status_steps)
             status_placeholder.markdown(status_text)
 
-        success, df_processed = apply_scaling(df_processed, recommendations)
+        success, df_processed = preprocessing.apply_scaling(df_processed, prep_plan)
         if success:
             progress.progress(int((6 / total_steps) * 100))
             status_map["Scaling"] = "✓"
@@ -529,26 +303,33 @@ else:
             mime="text/csv"
         )
         st.session_state["df_processed"] = df_processed
+        
+        # SAVE PIPELINE CONFIGURATIONS: Store recommendations dictionary into session state
+        st.session_state["recommendations"] = prep_plan
 
+
+    # ==========================================
+    # REST OF TRAINING FLOW (Kept identical as per your code)
+    # ==========================================
     target_dtype = df[target_col].dtype
     unique_values = df[target_col].nunique()
     if pd.api.types.is_numeric_dtype(df[target_col]):
-        if unique_values <= 10:
-            problem_type = "Classification"
+        if unique_values == 2:
+            problem_type = "Binary Classification"
+        elif unique_values <= 10:
+            problem_type = "Multi-class Classification"
         else:
             problem_type = "Regression"
-
     else:
         if unique_values == 2:
             problem_type = "Binary Classification"
-
         else:
             problem_type = "Multi-class Classification"
 
     st.subheader("Problem Type")
     st.success(problem_type)
 
-    models = recommend_models(problem_type, df, target_col)
+    models = recommendations.recommend_models(problem_type, df, target_col)
     st.subheader("Recommended Models")
 
     for model in models:
@@ -556,19 +337,11 @@ else:
             st.write(model["Reason"])
 
     st.subheader("Select Model")
-
-    selected_model = st.selectbox(
-        "Choose a model to train",
-        [model["Model"] for model in models]
-    )
+    selected_model = st.selectbox("Choose a model to train", [model["Model"] for model in models])
 
     for model in models:
         if model["Model"] == selected_model:
-            st.info(
-                f"⭐ {model['Rating']}\n\n"
-                f"**Why Sherlock recommends it:**\n\n"
-                f"{model['Reason']}"
-            )
+            st.info(f"⭐ {model['Rating']}\n\n**Why Sherlock recommends it:**\n\n{model['Reason']}")
 
     if st.button("Train Model"):
         if "df_processed" not in st.session_state:
@@ -580,13 +353,13 @@ else:
         X = df_processed.drop(columns=[target_col])
         y = df_processed[target_col]
 
-        y, target_encoder = prepare_target(y, problem_type)
+        y, target_encoder = training.prepare_target(y, problem_type)
 
-        X_train, X_test, y_train, y_test = train_test_split(X,y,test_size=0.2,random_state=42)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
         st.success("Dataset splitted into training and testing dataset")
         
-        model = select_model(selected_model, problem_type)
-        model.fit(X_train,y_train)
+        model = training.select_model(selected_model, problem_type)
+        model.fit(X_train, y_train)
         st.success(f"{selected_model} trainned & ready")
         
         predictions = model.predict(X_test)
@@ -605,15 +378,16 @@ else:
         if hasattr(model, "feature_importances_"):
             st.subheader("Feature Importance")
             importance = model.feature_importances_
-            importance_df = pd.DataFrame({"Feature": X.columns,"Importance": importance})
+            importance_df = pd.DataFrame({"Feature": X.columns, "Importance": importance})
             importance_df = importance_df.sort_values(by="Importance", ascending=False)
-            st.dataframe(importance_df,hide_index=True,use_container_width=True)
-            fig, ax = plt.subplots(figsize=(8,5))
-            ax.barh(importance_df["Feature"],importance_df["Importance"])
+            st.dataframe(importance_df, hide_index=True, use_container_width=True)
+            fig, ax = plt.subplots(figsize=(8, 5))
+            ax.barh(importance_df["Feature"], importance_df["Importance"])
             ax.invert_yaxis()
             ax.set_xlabel("Importance")
             ax.set_title("Feature Importance")
             st.pyplot(fig)
+
         y_test = st.session_state["y_test"]
         predictions = st.session_state["predictions"]
 
@@ -657,6 +431,16 @@ else:
             c2.metric("Precision", fmt(precision))
             c3.metric("Recall", fmt(recall))
             c4.metric("F1 Score", fmt(f1))
+
+        model_buffer = io.BytesIO()
+        joblib.dump(model, model_buffer)
+        st.download_button(
+            "Download Trained Model (.joblib)",
+            data=model_buffer.getvalue(),
+            file_name=f"{selected_model.replace(' ', '_').lower()}.joblib",
+            mime="application/octet-stream"
+        )
+
         st.session_state["trained_models"] = [
             m for m in st.session_state["trained_models"] if m.get("Model") != selected_model
         ]
@@ -676,11 +460,11 @@ else:
         best = leaderboard.iloc[0]
         st.markdown("🏆 Sherlock's Verdict")
         st.write(f"{best['Model']} is currently the best-performing model with {best['Accuracy']:.2%} accuracy.")
-    
 
-
+    # ==========================================
+    # REFACTORED PREDICTION SECTION
+    # ==========================================
     st.divider()
-
     st.header("🔮 Predict on New Dataset")
 
     prediction_file = st.file_uploader(
@@ -690,39 +474,55 @@ else:
     )
 
     if prediction_file is not None:
-
         if "trained_model" not in st.session_state:
-
             st.warning("Please train a model first.")
-
+        elif "recommendations" not in st.session_state:
+            st.warning("Preprocessing plan missing. Please regenerate training data splits.")
         else:
-
+            # 1. Retrieve everything from session state
             model = st.session_state["trained_model"]
             feature_columns = st.session_state["feature_columns"]
             encoder = st.session_state.get("target_encoder")
+            recommendations = st.session_state["recommendations"]
 
-            new_df = pd.read_csv(prediction_file)
-
+            # 2. Read evaluation batch
+            raw_new_df = pd.read_csv(prediction_file)
             st.subheader("Uploaded Dataset")
+            st.dataframe(raw_new_df.head())
 
-            st.dataframe(new_df.head())
+            # 3. Clone for modifications during pipeline steps
+            new_df = raw_new_df.copy()
 
-            new_df = new_df.reindex(columns=feature_columns)
+            # If target column happens to be present in inference batch, drop it to match inference reality
+            target_col_name = st.session_state.get("target_column")
+            if target_col_name in new_df.columns:
+                new_df = new_df.drop(columns=[target_col_name])
 
+            # 4. Mirror preprocessing execution order (Omitting handle_duplicate_rows as instructed)
+            _, new_df = preprocessing.handle_missing_values(new_df, recommendations)
+            _, new_df = preprocessing.remove_constant_columns(new_df, recommendations)
+            _, new_df = preprocessing.handle_outliers(new_df, recommendations)
+            _, new_df = preprocessing.apply_encoding(new_df, recommendations)
+            _, new_df = preprocessing.apply_scaling(new_df, recommendations)
+
+            # 5. Schema alignment: align columns with training data and fill structure gaps with 0
+            new_df = new_df.reindex(columns=feature_columns, fill_value=0)
+
+            # 6. Execute model inference using preprocessed values
             predictions = model.predict(new_df)
 
+            # 7. Convert targets back to string representations if classification categories exist
             if encoder is not None:
                 predictions = encoder.inverse_transform(predictions)
 
-            result_df = new_df.copy()
+            # 8. Render output
+            result_df = raw_new_df.copy()
             result_df["Prediction"] = predictions
 
             st.subheader("Prediction Results")
-
             st.dataframe(result_df)
 
             csv = result_df.to_csv(index=False).encode("utf-8")
-
             st.download_button(
                 "Download Predictions",
                 data=csv,
